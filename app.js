@@ -66,3 +66,33 @@ export async function compressPdf(bytes, deps = { PDFDocument: globalThis.PDFLib
     return bytes;
   }
 }
+
+export function minimalCoreXml() {
+  return (
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n' +
+    '<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" ' +
+    'xmlns:dc="http://purl.org/dc/elements/1.1/"></cp:coreProperties>'
+  );
+}
+
+export function minimalAppXml() {
+  return (
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n' +
+    '<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties">' +
+    '</Properties>'
+  );
+}
+
+export function stripTrackedChanges(xml) {
+  return xml
+    .replace(/<w:del(?:\s[^>]*)?>[\s\S]*?<\/w:del>/g, '')
+    .replace(/<w:ins(?:\s[^>]*)?>/g, '')
+    .replace(/<\/w:ins>/g, '');
+}
+
+export function stripCommentMarkers(xml) {
+  return xml.replace(
+    /<w:commentRangeStart\b[^>]*\/?>|<\/w:commentRangeStart>|<w:commentRangeEnd\b[^>]*\/?>|<\/w:commentRangeEnd>|<w:commentReference\b[^>]*\/?>|<\/w:commentReference>/g,
+    ''
+  );
+}

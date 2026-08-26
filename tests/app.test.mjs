@@ -8,6 +8,10 @@ import {
   FILE_MAX_BYTES,
   FILE_EXTENSIONS,
   compressPdf,
+  minimalCoreXml,
+  minimalAppXml,
+  stripTrackedChanges,
+  stripCommentMarkers,
 } from '../app.js';
 
 const require = createRequire(import.meta.url);
@@ -236,5 +240,151 @@ describe('compressPdf', () => {
     const result = await compressPdf(input, { PDFDocument: stubPDFDocument });
     assert.ok(loadCallCount > 0, 'stub PDFDocument.load was never called — deps were not used');
     assert.equal(result, sentinel, 'result was not the stub sentinel — deps were not consulted');
+  });
+});
+
+describe('minimalCoreXml', () => {
+  it('returns a non-empty string', () => {
+    const xml = minimalCoreXml();
+    assert.equal(typeof xml, 'string');
+    assert.ok(xml.length > 0);
+  });
+
+  it('starts with an XML prolog', () => {
+    assert.ok(minimalCoreXml().startsWith('<?xml'));
+  });
+
+  it('declares the cp core-properties root element', () => {
+    assert.match(minimalCoreXml(), /<cp:coreProperties[\s>]/);
+  });
+
+  it('declares the cp namespace', () => {
+    assert.match(
+      minimalCoreXml(),
+      /xmlns:cp="http:\/\/schemas\.openxmlformats\.org\/package\/2006\/metadata\/core-properties"/
+    );
+  });
+});
+
+describe('minimalAppXml', () => {
+  it('returns a non-empty string', () => {
+    const xml = minimalAppXml();
+    assert.equal(typeof xml, 'string');
+    assert.ok(xml.length > 0);
+  });
+
+  it('starts with an XML prolog', () => {
+    assert.ok(minimalAppXml().startsWith('<?xml'));
+  });
+
+  it('declares a Properties root element with extended-properties namespace', () => {
+    const xml = minimalAppXml();
+    assert.match(xml, /<Properties[\s>]/);
+    assert.match(
+      xml,
+      /xmlns="http:\/\/schemas\.openxmlformats\.org\/officeDocument\/2006\/extended-properties"/
+    );
+  });
+});
+
+describe('stripTrackedChanges', () => {
+  it('drops <w:del>...</w:del> blocks including their contents', () => {
+    const input = '<w:p><w:r><w:t>before </w:t></w:r><w:del>removed text</w:del><w:r><w:t>after</w:t></w:r></w:p>';
+    const output = stripTrackedChanges(input);
+    assert.equal(output.includes('<w:del>'), false);
+    assert.equal(output.includes('removed text'), false);
+    assert.match(output, /before/);
+    assert.match(output, /after/);
+  });
+
+  it('drops <w:del> blocks that carry attributes', () => {
+    const input = '<w:del w:id="1" w:author="x">stuff</w:del>';
+    const output = stripTrackedChanges(input);
+    assert.equal(output, '');
+  });
+
+  it('unwraps <w:ins>...</w:ins> keeping the inner content', () => {
+    const input = '<w:p><w:r><w:t>before </w:t></w:r><w:ins>inserted</w:ins><w:r><w:t>after</w:t></w:r></w:p>';
+    const output = stripTrackedChanges(input);
+    assert.equal(output.includes('<w:ins>'), false);
+    assert.equal(output.includes('</w:ins>'), false);
+    assert.match(output, /inserted/);
+  });
+
+  it('unwraps <w:ins> that carry attributes', () => {
+    const input = '<w:ins w:id="2" w:author="x">kept</w:ins>';
+    const output = stripTrackedChanges(input);
+    assert.equal(output, 'kept');
+  });
+
+  it('handles both <w:del> and <w:ins> in the same fragment', () => {
+    const input = 'a<w:del>b</w:del>c<w:ins>d</w:ins>e';
+    const output = stripTrackedChanges(input);
+    assert.equal(output, 'acde');
+  });
+
+  it('leaves fragments without tracked changes unchanged', () => {
+    const input = '<w:p><w:r><w:t>plain</w:t></w:r></w:p>';
+    assert.equal(stripTrackedChanges(input), input);
+  });
+
+  it('leaves a plain string without tracked changes unchanged', () => {
+    assert.equal(stripTrackedChanges('hello world'), 'hello world');
+  });
+
+  it('drops a <w:del> nested inside an <w:ins> (drop-del first, then unwrap-ins)', () => {
+    const input = '<w:ins>keep<w:del>drop</w:del>more</w:ins>';
+    const output = stripTrackedChanges(input);
+    assert.equal(output, 'keepmore');
+  });
+});
+
+describe('stripCommentMarkers', () => {
+  it('removes <w:commentRangeStart/> markers', () => {
+    const input = '<w:p>a<w:commentRangeStart/>b</w:p>';
+    const output = stripCommentMarkers(input);
+    assert.equal(output.includes('commentRangeStart'), false);
+    assert.match(output, /a/);
+    assert.match(output, /b/);
+  });
+
+  it('removes <w:commentRangeEnd/> markers', () => {
+    const input = '<w:p>a<w:commentRangeEnd/>b</w:p>';
+    const output = stripCommentMarkers(input);
+    assert.equal(output.includes('commentRangeEnd'), false);
+  });
+
+  it('removes <w:commentReference w:id="0"/> markers', () => {
+    const input = '<w:p>a<w:commentReference w:id="0"/>b</w:p>';
+    const output = stripCommentMarkers(input);
+    assert.equal(output.includes('commentReference'), false);
+    assert.match(output, /a/);
+    assert.match(output, /b/);
+  });
+
+  it('removes all three marker types together', () => {
+    const input =
+      '<w:p><w:commentRangeStart w:id="0"/>text<w:commentRangeEnd w:id="0"/><w:commentReference w:id="0"/></w:p>';
+    const output = stripCommentMarkers(input);
+    assert.equal(output.includes('commentRangeStart'), false);
+    assert.equal(output.includes('commentRangeEnd'), false);
+    assert.equal(output.includes('commentReference'), false);
+    assert.match(output, /text/);
+  });
+
+  it('handles paired <w:commentReference ...></w:commentReference> form', () => {
+    const input = '<w:p>a<w:commentReference w:id="0"></w:commentReference>b</w:p>';
+    const output = stripCommentMarkers(input);
+    assert.equal(output.includes('commentReference'), false);
+    assert.equal(output, '<w:p>ab</w:p>');
+  });
+
+  it('leaves fragments without comment markers unchanged', () => {
+    const input = '<w:p><w:r><w:t>plain</w:t></w:r></w:p>';
+    assert.equal(stripCommentMarkers(input), input);
+  });
+
+  it('leaves a plain string without comment markers unchanged', () => {
+    assert.equal(stripCommentMarkers('hello world'), 'hello world');
   });
 });
