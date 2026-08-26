@@ -96,3 +96,33 @@ export function stripCommentMarkers(xml) {
     ''
   );
 }
+
+/**
+ * Re-encode an image at the supplied JPEG quality via Canvas.
+ * @param {Uint8Array} bytes
+ * @param {string} mimeType
+ * @param {number} quality
+ * @param {{createImageBitmap?: Function, OffscreenCanvas?: Function}} [deps]
+ * @returns {Promise<Uint8Array>}
+ */
+export async function reencodeMediaImage(bytes, mimeType, quality, deps = {}) {
+  const {
+    createImageBitmap = globalThis.createImageBitmap,
+    OffscreenCanvas = globalThis.OffscreenCanvas,
+  } = deps;
+
+  if (!createImageBitmap) throw new Error('createImageBitmap not available');
+  if (!OffscreenCanvas) throw new Error('OffscreenCanvas not available');
+
+  const blob = new Blob([bytes], { type: mimeType });
+  const bitmap = await createImageBitmap(blob);
+  try {
+    const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(bitmap, 0, 0);
+    const outBlob = await canvas.convertToBlob({ type: 'image/jpeg', quality });
+    return new Uint8Array(await outBlob.arrayBuffer());
+  } finally {
+    bitmap.close();
+  }
+}

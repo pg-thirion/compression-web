@@ -12,6 +12,7 @@ import {
   minimalAppXml,
   stripTrackedChanges,
   stripCommentMarkers,
+  reencodeMediaImage,
 } from '../app.js';
 
 const require = createRequire(import.meta.url);
@@ -411,5 +412,108 @@ describe('stripCommentMarkers', () => {
 
   it('leaves a plain string without comment markers unchanged', () => {
     assert.equal(stripCommentMarkers('hello world'), 'hello world');
+  });
+});
+
+function createImageMocks({ convertToBlobImpl } = {}) {
+  let closeCount = 0;
+  let blobReceived = null;
+  let convertToBlobOpts = null;
+  let getContextCalled = false;
+  let drawImageCalled = false;
+  let canvasWidth = null;
+  let canvasHeight = null;
+
+  const fakeBitmap = {
+    width: 100,
+    height: 50,
+    close() { closeCount++; },
+  };
+
+  const createImageBitmap = async (blob) => {
+    blobReceived = blob;
+    return fakeBitmap;
+  };
+
+  function MockOffscreenCanvas(width, height) {
+    canvasWidth = width;
+    canvasHeight = height;
+  }
+  MockOffscreenCanvas.prototype.getContext = function () {
+    getContextCalled = true;
+    return { drawImage: () => { drawImageCalled = true; } };
+  };
+  MockOffscreenCanvas.prototype.convertToBlob = function (opts) {
+    convertToBlobOpts = opts;
+    if (convertToBlobImpl) return convertToBlobImpl(opts);
+    return Promise.resolve(new Blob([new Uint8Array([1, 2, 3, 4])], { type: 'image/jpeg' }));
+  };
+
+  return {
+    deps: { createImageBitmap, OffscreenCanvas: MockOffscreenCanvas },
+    state: () => ({
+      closeCount,
+      blobReceived,
+      convertToBlobOpts,
+      getContextCalled,
+      drawImageCalled,
+      canvasWidth,
+      canvasHeight,
+    }),
+  };
+}
+
+describe('reencodeMediaImage', () => {
+  it('returns a Uint8Array from convertToBlob output', async () => {
+    const { deps, state } = createImageMocks();
+    const result = await reencodeMediaImage(
+      new Uint8Array([10, 20, 30]),
+      'image/jpeg',
+      0.7,
+      deps
+    );
+    assert.ok(result instanceof Uint8Array);
+    assert.equal(result.length, 4);
+    assert.equal(state().drawImageCalled, true);
+    assert.equal(state().getContextCalled, true);
+  });
+
+  it('sizes the canvas to the bitmap dimensions', async () => {
+    const { deps, state } = createImageMocks();
+    await reencodeMediaImage(new Uint8Array([1, 2, 3]), 'image/jpeg', 0.5, deps);
+    const s = state();
+    assert.equal(s.canvasWidth, 100);
+    assert.equal(s.canvasHeight, 50);
+  });
+
+  it('passes { type: "image/jpeg", quality } to convertToBlob', async () => {
+    const { deps, state } = createImageMocks();
+    await reencodeMediaImage(new Uint8Array([1, 2, 3]), 'image/jpeg', 0.42, deps);
+    assert.deepEqual(state().convertToBlobOpts, { type: 'image/jpeg', quality: 0.42 });
+  });
+
+  it('wraps bytes in a Blob with the supplied mimeType', async () => {
+    const { deps, state } = createImageMocks();
+    await reencodeMediaImage(new Uint8Array([1, 2, 3]), 'image/png', 0.5, deps);
+    const blob = state().blobReceived;
+    assert.ok(blob instanceof Blob);
+    assert.equal(blob.type, 'image/png');
+  });
+
+  it('closes the bitmap on success', async () => {
+    const { deps, state } = createImageMocks();
+    await reencodeMediaImage(new Uint8Array([1, 2, 3]), 'image/jpeg', 0.7, deps);
+    assert.equal(state().closeCount, 1);
+  });
+
+  it('closes the bitmap even when convertToBlob throws', async () => {
+    const { deps, state } = createImageMocks({
+      convertToBlobImpl: () => Promise.reject(new Error('encode failed')),
+    });
+    await assert.rejects(
+      reencodeMediaImage(new Uint8Array([1, 2, 3]), 'image/jpeg', 0.7, deps),
+      /encode failed/
+    );
+    assert.equal(state().closeCount, 1);
   });
 });
