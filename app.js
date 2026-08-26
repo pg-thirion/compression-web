@@ -2,14 +2,14 @@
 // Browser-only static web app that compresses PDF and DOCX files locally.
 // See docs/superpowers/specs/2026-08-26-compression-web-design.md for the full design.
 
-export const ALLOWED_LEVELS = new Set(['low', 'medium', 'high']);
+export const ALLOWED_LEVELS = new Set(['low', 'medium', 'high', 'max']);
 export const FILE_MAX_BYTES = 100 * 1024 * 1024;
 export const FILE_EXTENSIONS = new Set(['.pdf', '.docx']);
 
 /**
  * Parse a compression level string. Strictly case-sensitive.
  * @param {string} value
- * @returns {'low'|'medium'|'high'}
+ * @returns {'low'|'medium'|'high'|'max'}
  * @throws {RangeError} if value is not one of the allowed levels
  */
 export function parseLevel(value) {
