@@ -14,6 +14,10 @@ import {
   stripCommentMarkers,
   reencodeMediaImage,
   compressDocx,
+  filterFiles,
+  downloadResults,
+  onCompressClick,
+  readDocxOptions,
 } from '../app.js';
 
 const require = createRequire(import.meta.url);
@@ -640,5 +644,442 @@ describe('compressDocx', () => {
     };
     const result = await compressDocx(input, 'medium', {}, { JSZip: stubJSZip });
     assert.equal(result, input);
+  });
+});
+
+describe('filterFiles', () => {
+  it('returns array of accepted files for valid input', () => {
+    const errors = [];
+    const files = [
+      { name: 'a.pdf', size: 1024 },
+      { name: 'b.docx', size: 2048 },
+    ];
+    const accepted = filterFiles(files, errors);
+    assert.equal(accepted.length, 2);
+    assert.equal(accepted[0], files[0]);
+    assert.equal(accepted[1], files[1]);
+    assert.equal(errors.length, 0);
+  });
+
+  it('pushes { name, message } for invalid files', () => {
+    const errors = [];
+    const files = [{ name: 'bad.png', size: 1024 }];
+    const accepted = filterFiles(files, errors);
+    assert.equal(accepted.length, 0);
+    assert.equal(errors.length, 1);
+    assert.deepEqual(errors[0], { name: 'bad.png', message: errors[0].message });
+    assert.match(errors[0].message, /extension/i);
+  });
+
+  it('handles empty input with no errors', () => {
+    const errors = [];
+    const accepted = filterFiles([], errors);
+    assert.deepEqual(accepted, []);
+    assert.deepEqual(errors, []);
+  });
+
+  it('splits a mix of valid + invalid files', () => {
+    const errors = [];
+    const valid = { name: 'good.pdf', size: 1024 };
+    const invalid = { name: 'bad.exe', size: 1024 };
+    const accepted = filterFiles([valid, invalid], errors);
+    assert.equal(accepted.length, 1);
+    assert.equal(accepted[0], valid);
+    assert.equal(errors.length, 1);
+    assert.equal(errors[0].name, 'bad.exe');
+  });
+
+  it('honors deps.validateFile when provided', () => {
+    const errors = [];
+    const files = [{ name: 'anything.xyz', size: 1 }];
+    const customValidate = () => 'custom error';
+    const accepted = filterFiles(files, errors, { validateFile: customValidate });
+    assert.equal(accepted.length, 0);
+    assert.equal(errors.length, 1);
+    assert.equal(errors[0].name, 'anything.xyz');
+    assert.equal(errors[0].message, 'custom error');
+  });
+
+  it('falls back to default validateFile when deps.validateFile is not provided', () => {
+    const errors = [];
+    const files = [{ name: 'report.pdf', size: 1024 }];
+    const accepted = filterFiles(files, errors, {});
+    assert.equal(accepted.length, 1);
+    assert.equal(errors.length, 0);
+  });
+
+  it('rejects a file with no extension', () => {
+    const errors = [];
+    const accepted = filterFiles([{ name: 'noext', size: 1024 }], errors);
+    assert.equal(accepted.length, 0);
+    assert.equal(errors.length, 1);
+    assert.equal(errors[0].name, 'noext');
+  });
+
+  it('does not mutate the input iterable', () => {
+    const errors = [];
+    const files = [{ name: 'a.pdf', size: 100 }, { name: 'b.png', size: 100 }];
+    const filesCopy = JSON.parse(JSON.stringify(files));
+    filterFiles(files, errors);
+    assert.deepEqual(files, filesCopy);
+  });
+});
+
+function makeDownloadDeps(overrides = {}) {
+  const calls = [];
+  const fakeBlob = { type: 'application/zip' };
+  function MockJSZip() {
+    this.files = {};
+  }
+  MockJSZip.prototype.file = function (name, bytes) {
+    this.files[name] = bytes;
+    calls.push({ method: 'file', name, bytes });
+  };
+  MockJSZip.prototype.generateAsync = async function (opts) {
+    calls.push({ method: 'generateAsync', opts });
+    return fakeBlob;
+  };
+  const anchor = {
+    href: null,
+    download: null,
+    click() {
+      calls.push({ method: 'click' });
+    },
+  };
+  const deps = {
+    JSZip: MockJSZip,
+    createObjectURL: (blob) => {
+      calls.push({ method: 'createObjectURL', blob });
+      return 'blob:test-url';
+    },
+    createAnchorElement: () => {
+      calls.push({ method: 'createAnchorElement' });
+      return anchor;
+    },
+    scheduleRevoke: (url) => {
+      calls.push({ method: 'scheduleRevoke', url });
+    },
+  };
+  return { calls, deps: { ...deps, ...overrides }, anchor, fakeBlob };
+}
+
+describe('downloadResults', () => {
+  it('returns the object URL', async () => {
+    const { deps } = makeDownloadDeps();
+    const url = await downloadResults(
+      [{ name: 'a.bin', bytes: new Uint8Array([1]) }],
+      deps
+    );
+    assert.equal(url, 'blob:test-url');
+  });
+
+  it('calls JSZip.file for each result entry', async () => {
+    const { deps, calls } = makeDownloadDeps();
+    const bytes1 = new Uint8Array([1, 2]);
+    const bytes2 = new Uint8Array([3, 4]);
+    await downloadResults(
+      [
+        { name: 'one.compressed.pdf', bytes: bytes1 },
+        { name: 'two.compressed.docx', bytes: bytes2 },
+      ],
+      deps
+    );
+    const fileCalls = calls.filter((c) => c.method === 'file');
+    assert.equal(fileCalls.length, 2);
+    assert.equal(fileCalls[0].name, 'one.compressed.pdf');
+    assert.equal(fileCalls[1].name, 'two.compressed.docx');
+    assert.equal(fileCalls[0].bytes, bytes1);
+    assert.equal(fileCalls[1].bytes, bytes2);
+  });
+
+  it('preserves call order: generateAsync -> createObjectURL -> createAnchorElement -> click -> scheduleRevoke', async () => {
+    const { deps, calls } = makeDownloadDeps();
+    await downloadResults(
+      [{ name: 'a.bin', bytes: new Uint8Array([1]) }],
+      deps
+    );
+    const order = ['generateAsync', 'createObjectURL', 'createAnchorElement', 'click', 'scheduleRevoke'];
+    const seenAt = order.map((m) => calls.findIndex((c) => c.method === m));
+    for (let i = 1; i < seenAt.length; i++) {
+      assert.ok(
+        seenAt[i - 1] < seenAt[i],
+        `expected ${order[i-1]} (idx ${seenAt[i-1]}) before ${order[i]} (idx ${seenAt[i]})`
+      );
+    }
+  });
+
+  it('sets anchor.href to the object URL and anchor.download to the filename', async () => {
+    const { deps, anchor } = makeDownloadDeps();
+    await downloadResults(
+      [{ name: 'a.bin', bytes: new Uint8Array([1]) }],
+      { ...deps, filename: 'my-bundle.zip' }
+    );
+    assert.equal(anchor.href, 'blob:test-url');
+    assert.equal(anchor.download, 'my-bundle.zip');
+  });
+
+  it('defaults the filename to a compressed-<timestamp>.zip string', async () => {
+    const { deps, anchor } = makeDownloadDeps();
+    await downloadResults(
+      [{ name: 'a.bin', bytes: new Uint8Array([1]) }],
+      deps
+    );
+    assert.match(anchor.download, /^compressed-\d+\.zip$/);
+  });
+
+  it('round-trips real JSZip: build zip, load it back, verify contents', async () => {
+    const bytes1 = new Uint8Array([10, 20, 30]);
+    const bytes2 = new Uint8Array([40, 50, 60]);
+    let capturedBlob = null;
+    const anchor = { download: null, href: null, click() {} };
+
+    await downloadResults(
+      [
+        { name: 'one.pdf', bytes: bytes1 },
+        { name: 'two.docx', bytes: bytes2 },
+      ],
+      {
+        JSZip,
+        createObjectURL: (blob) => {
+          capturedBlob = blob;
+          return 'blob:url';
+        },
+        createAnchorElement: () => anchor,
+        scheduleRevoke: () => {},
+      }
+    );
+
+    assert.ok(capturedBlob instanceof Blob);
+    const verify = await JSZip.loadAsync(await capturedBlob.arrayBuffer());
+    const one = await verify.file('one.pdf').async('uint8array');
+    const two = await verify.file('two.docx').async('uint8array');
+    assert.deepEqual([...one], [10, 20, 30]);
+    assert.deepEqual([...two], [40, 50, 60]);
+  });
+
+  it('throws when JSZip is not loaded', async () => {
+    await assert.rejects(
+      downloadResults(
+        [{ name: 'a.bin', bytes: new Uint8Array([1]) }],
+        {
+          JSZip: null,
+          createObjectURL: () => '',
+          createAnchorElement: () => ({ click() {} }),
+          scheduleRevoke: () => {},
+        }
+      ),
+      /JSZip/
+    );
+  });
+
+  it('handles an empty results array (produces a valid but empty zip)', async () => {
+    const { deps, fakeBlob } = makeDownloadDeps();
+    const url = await downloadResults([], deps);
+    assert.equal(url, 'blob:test-url');
+    assert.equal(fakeBlob, fakeBlob); // generateAsync still returned the stub blob
+  });
+});
+
+describe('readDocxOptions', () => {
+  it('returns the checked-state of the three DOCX option checkboxes', () => {
+    const fieldset = {
+      querySelector: (sel) => {
+        const map = {
+          '#strip-metadata': { checked: true },
+          '#strip-tracked-changes': { checked: false },
+          '#strip-comments': { checked: true },
+        };
+        return map[sel] || null;
+      },
+    };
+    const opts = readDocxOptions(fieldset);
+    assert.equal(opts.stripMetadata, true);
+    assert.equal(opts.stripTrackedChanges, false);
+    assert.equal(opts.stripComments, true);
+  });
+
+  it('defaults all options to false when checkboxes are missing', () => {
+    const fieldset = { querySelector: () => null };
+    const opts = readDocxOptions(fieldset);
+    assert.equal(opts.stripMetadata, false);
+    assert.equal(opts.stripTrackedChanges, false);
+    assert.equal(opts.stripComments, false);
+  });
+});
+
+function makeUiMocks(files = []) {
+  const errorsList = { children: [], appendChild(el) { this.children.push(el); } };
+  const status = { textContent: '' };
+  const convertButton = { disabled: false };
+  const fileInput = { files };
+  const levelSelect = { value: 'medium' };
+  const docxCheckboxes = {
+    '#strip-metadata': { checked: true },
+    '#strip-tracked-changes': { checked: false },
+    '#strip-comments': { checked: false },
+  };
+  const docxOptions = {
+    querySelector: (sel) => docxCheckboxes[sel] || null,
+  };
+  return {
+    elements: { input: fileInput, level: levelSelect, docxOptions, status, errorsList, convertButton },
+    mocks: { errorsList, status, convertButton, fileInput, levelSelect, docxOptions, docxCheckboxes },
+  };
+}
+
+describe('onCompressClick', () => {
+  it('compresses a valid PDF, names it *.compressed.pdf, and triggers download', async () => {
+    const { elements, mocks } = makeUiMocks([{ name: 'test.pdf', size: 1024 }]);
+    let downloaded = null;
+
+    await onCompressClick(elements, {
+      arrayBuffer: async () => new Uint8Array([1, 2, 3]),
+      compressPdf: async (bytes) => {
+        assert.deepEqual([...bytes], [1, 2, 3]);
+        return new Uint8Array([9, 9, 9]);
+      },
+      compressDocx: async () => new Uint8Array([]),
+      downloadResults: async (results) => { downloaded = results; },
+      appendError: () => {},
+      setStatus: (el, text) => { el.textContent = text; },
+    });
+
+    assert.ok(downloaded, 'downloadResults was not called');
+    assert.equal(downloaded.length, 1);
+    assert.equal(downloaded[0].name, 'test.compressed.pdf');
+    assert.deepEqual([...downloaded[0].bytes], [9, 9, 9]);
+    assert.match(mocks.status.textContent, /compressed 1 file/i);
+  });
+
+  it('routes DOCX files via compressDocx with the read options', async () => {
+    const { elements } = makeUiMocks([{ name: 'doc.docx', size: 1024 }]);
+    let captured = null;
+
+    await onCompressClick(elements, {
+      arrayBuffer: async () => new Uint8Array([1]),
+      compressPdf: async () => new Uint8Array([]),
+      compressDocx: async (bytes, level, opts) => {
+        captured = { level, opts };
+        return new Uint8Array([5, 5]);
+      },
+      downloadResults: async (results) => {
+        assert.equal(results[0].name, 'doc.compressed.docx');
+      },
+      appendError: () => {},
+    });
+
+    assert.equal(captured.level, 'medium');
+    assert.equal(captured.opts.stripMetadata, true);
+    assert.equal(captured.opts.stripTrackedChanges, false);
+    assert.equal(captured.opts.stripComments, false);
+  });
+
+  it('filters invalid files: bad ones go to errors, good ones are processed', async () => {
+    const errorsSeen = [];
+    const { elements, mocks } = makeUiMocks([
+      { name: 'good.pdf', size: 1024 },
+      { name: 'bad.exe', size: 1024 },
+    ]);
+    let acceptedResults = null;
+
+    await onCompressClick(elements, {
+      arrayBuffer: async () => new Uint8Array([1]),
+      compressPdf: async (bytes) => bytes,
+      compressDocx: async (bytes) => bytes,
+      downloadResults: async (results) => { acceptedResults = results; },
+      appendError: (list, name, message) => {
+        errorsSeen.push({ name, message });
+        list.appendChild({ textContent: `${name}: ${message}` });
+      },
+    });
+
+    assert.equal(acceptedResults.length, 1);
+    assert.equal(acceptedResults[0].name, 'good.compressed.pdf');
+    assert.equal(errorsSeen.length, 1);
+    assert.equal(errorsSeen[0].name, 'bad.exe');
+    assert.match(errorsSeen[0].message, /extension/i);
+  });
+
+  it('reports "no valid files" status when input has no accepted files', async () => {
+    const { elements, mocks } = makeUiMocks([]);
+    let downloadCalled = false;
+
+    await onCompressClick(elements, {
+      arrayBuffer: async () => new Uint8Array([]),
+      compressPdf: async () => new Uint8Array([]),
+      compressDocx: async () => new Uint8Array([]),
+      downloadResults: async () => { downloadCalled = true; },
+      appendError: () => {},
+      setStatus: (el, text) => { el.textContent = text; },
+    });
+
+    assert.equal(downloadCalled, false);
+    assert.match(mocks.status.textContent, /no valid/i);
+  });
+
+  it('disables convertButton during processing and re-enables it after', async () => {
+    const { elements, mocks } = makeUiMocks([{ name: 'a.pdf', size: 1 }]);
+    const buttonStates = [];
+    buttonStates.push(mocks.convertButton.disabled);
+
+    await onCompressClick(elements, {
+      arrayBuffer: async () => {
+        buttonStates.push(mocks.convertButton.disabled);
+        return new Uint8Array([1]);
+      },
+      compressPdf: async (bytes) => {
+        buttonStates.push(mocks.convertButton.disabled);
+        return bytes;
+      },
+      compressDocx: async (bytes) => bytes,
+      downloadResults: async () => {
+        buttonStates.push(mocks.convertButton.disabled);
+      },
+      appendError: () => {},
+    });
+
+    buttonStates.push(mocks.convertButton.disabled);
+    assert.deepEqual(buttonStates, [false, true, true, true, false]);
+  });
+
+  it('passes download-error messages to appendError and updates status', async () => {
+    const { elements, mocks } = makeUiMocks([{ name: 'a.pdf', size: 1 }]);
+    const errorsSeen = [];
+
+    await onCompressClick(elements, {
+      arrayBuffer: async () => new Uint8Array([1]),
+      compressPdf: async (bytes) => bytes,
+      compressDocx: async (bytes) => bytes,
+      downloadResults: async () => { throw new Error('blob blew up'); },
+      appendError: (list, name, message) => {
+        errorsSeen.push({ name, message });
+        list.appendChild({ textContent: `${name}: ${message}` });
+      },
+      setStatus: (el, text) => { el.textContent = text; },
+    });
+
+    assert.equal(errorsSeen.length, 1);
+    assert.equal(errorsSeen[0].name, 'Download');
+    assert.equal(errorsSeen[0].message, 'blob blew up');
+    assert.match(mocks.status.textContent, /download failed/i);
+  });
+
+  it('calls arrayBuffer exactly once per accepted file', async () => {
+    const { elements } = makeUiMocks([
+      { name: 'a.pdf', size: 1 },
+      { name: 'b.docx', size: 1 },
+    ]);
+    const calls = [];
+    await onCompressClick(elements, {
+      arrayBuffer: async (file) => {
+        calls.push(file.name);
+        return new Uint8Array([1]);
+      },
+      compressPdf: async (bytes) => bytes,
+      compressDocx: async (bytes) => bytes,
+      downloadResults: async () => {},
+      appendError: () => {},
+    });
+    assert.deepEqual(calls, ['a.pdf', 'b.docx']);
   });
 });
