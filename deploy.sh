@@ -37,9 +37,7 @@ POLICY_JSON=$(cat <<JSON
         "arn:aws:s3:::${BUCKET_NAME}/index.html",
         "arn:aws:s3:::${BUCKET_NAME}/app.js",
         "arn:aws:s3:::${BUCKET_NAME}/lib/jszip.min.js",
-        "arn:aws:s3:::${BUCKET_NAME}/lib/pdf-lib.min.js",
-        "arn:aws:s3:::${BUCKET_NAME}/lib/pdf.min.js",
-        "arn:aws:s3:::${BUCKET_NAME}/lib/pdf.worker.min.js"
+        "arn:aws:s3:::${BUCKET_NAME}/lib/pdf-lib.min.js"
       ]
     }
   ]
@@ -56,8 +54,6 @@ aws s3 cp "$SCRIPT_DIR/index.html" "s3://${BUCKET_NAME}/index.html" --region "$R
 aws s3 cp "$SCRIPT_DIR/app.js" "s3://${BUCKET_NAME}/app.js" --region "$REGION" --content-type "text/javascript" --cache-control "public, max-age=86400"
 aws s3 cp "$SCRIPT_DIR/lib/jszip.min.js" "s3://${BUCKET_NAME}/lib/jszip.min.js" --region "$REGION" --content-type "text/javascript" --cache-control "public, max-age=31536000, immutable"
 aws s3 cp "$SCRIPT_DIR/lib/pdf-lib.min.js" "s3://${BUCKET_NAME}/lib/pdf-lib.min.js" --region "$REGION" --content-type "text/javascript" --cache-control "public, max-age=31536000, immutable"
-aws s3 cp "$SCRIPT_DIR/lib/pdf.min.js" "s3://${BUCKET_NAME}/lib/pdf.min.js" --region "$REGION" --content-type "text/javascript" --cache-control "public, max-age=31536000, immutable"
-aws s3 cp "$SCRIPT_DIR/lib/pdf.worker.min.js" "s3://${BUCKET_NAME}/lib/pdf.worker.min.js" --region "$REGION" --content-type "text/javascript" --cache-control "public, max-age=31536000, immutable"
 
 CLOUDFRONT_DISTRIBUTION_ID="${CLOUDFRONT_DISTRIBUTION_ID:-}"
 if [ -z "$CLOUDFRONT_DISTRIBUTION_ID" ] && [ -f "$HOME/.square-fit-batch/state" ]; then
@@ -68,8 +64,8 @@ if [ -n "$CLOUDFRONT_DISTRIBUTION_ID" ]; then
   cat > "$INVALIDATION_BATCH" <<JSON
 {
   "Paths": {
-    "Quantity": 6,
-    "Items": ["/index.html", "/app.js", "/lib/jszip.min.js", "/lib/pdf-lib.min.js", "/lib/pdf.min.js", "/lib/pdf.worker.min.js"]
+    "Quantity": 4,
+    "Items": ["/index.html", "/app.js", "/lib/jszip.min.js", "/lib/pdf-lib.min.js"]
   },
   "CallerReference": "deploy-$(date +%s)"
 }
