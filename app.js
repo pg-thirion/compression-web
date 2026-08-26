@@ -345,6 +345,54 @@ function defaultClearChildren(el) {
 }
 
 /**
+ * Format a byte count as a human-readable string (B / KB / MB).
+ * @param {number} n
+ * @returns {string}
+ */
+export function formatBytes(n) {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/**
+ * Render the selected file list into a `<ul>` element. Each file becomes an
+ * `<li>` showing name, formatted size, and lowercased extension (or 'unknown').
+ * @param {Iterable<{name: string, size: number}>} files
+ * @param {{replaceChildren?: Function, createElement?: Function, appendChild?: Function}|null} fileListEl
+ * @param {{
+ *   formatBytes?: (n: number) => string,
+ *   createElement?: (tag: string) => any,
+ *   appendChild?: (parent: any, child: any) => void,
+ * }} [deps]
+ */
+export function renderFileList(files, fileListEl, deps = {}) {
+  const {
+    formatBytes: formatFn = formatBytes,
+    createElement = (tag) => fileListEl && fileListEl.createElement
+      ? fileListEl.createElement(tag)
+      : (typeof document !== 'undefined' ? document.createElement(tag) : null),
+    appendChild = (parent, child) => parent.appendChild(child),
+  } = deps;
+
+  if (!fileListEl) return;
+
+  if (typeof fileListEl.replaceChildren === 'function') {
+    fileListEl.replaceChildren();
+  }
+
+  for (const file of files || []) {
+    const li = createElement('li');
+    const size = formatFn(file.size);
+    const ext = (file.name.toLowerCase().match(/\.([^.]+)$/) || [, 'unknown'])[1];
+    if (li && 'textContent' in li) {
+      li.textContent = `${file.name} — ${size} — ${ext}`;
+    }
+    appendChild(fileListEl, li);
+  }
+}
+
+/**
  * Orchestrate the compress-and-download flow.
  * Reads files from the input, validates them, routes each to compressPdf or
  * compressDocx by extension, and triggers downloadResults for the compressed set.
@@ -461,6 +509,7 @@ function attachUi() {
   const status = document.getElementById('status');
   const errorsList = document.getElementById('errors');
   const convertButton = document.getElementById('convert');
+  const fileListEl = document.getElementById('file-list');
 
   if (!fileInput || !levelSelect || !docxOptions || !status || !errorsList || !convertButton) {
     return;
@@ -483,6 +532,7 @@ function attachUi() {
       );
       convertButton.disabled = false;
     }
+    renderFileList(state.files, fileListEl);
   }
 
   fileInput.addEventListener('change', () => {

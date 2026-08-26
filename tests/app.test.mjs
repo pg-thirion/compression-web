@@ -19,6 +19,8 @@ import {
   onCompressClick,
   readDocxOptions,
   updateDocxOptionsVisibility,
+  formatBytes,
+  renderFileList,
 } from '../app.js';
 
 const require = createRequire(import.meta.url);
@@ -1148,5 +1150,111 @@ describe('onCompressClick', () => {
       appendError: () => {},
     });
     assert.deepEqual(calls, ['a.pdf', 'b.docx']);
+  });
+});
+
+describe('formatBytes', () => {
+  it('formats sub-1024 values as bytes', () => {
+    assert.equal(formatBytes(0), '0 B');
+    assert.equal(formatBytes(512), '512 B');
+    assert.equal(formatBytes(1023), '1023 B');
+  });
+
+  it('formats 1KB-1MB range with .toFixed(1) KB units', () => {
+    assert.equal(formatBytes(1024), '1.0 KB');
+    assert.equal(formatBytes(1536), '1.5 KB');
+    assert.equal(formatBytes(1024 * 1024 - 1), '1024.0 KB');
+  });
+
+  it('formats >= 1MB as MB', () => {
+    assert.equal(formatBytes(1024 * 1024), '1.0 MB');
+    assert.equal(formatBytes(2.5 * 1024 * 1024), '2.5 MB');
+  });
+});
+
+function makeFileListMock() {
+  let replaced = false;
+  const children = [];
+  const fileListEl = {
+    createElement(tag) {
+      return { tagName: tag.toUpperCase(), textContent: '' };
+    },
+    replaceChildren() {
+      replaced = true;
+      children.length = 0;
+    },
+    appendChild(child) {
+      children.push(child);
+    },
+    get children() {
+      return children;
+    },
+    _wasReplaced() { return replaced; },
+  };
+  return { fileListEl, children };
+}
+
+describe('renderFileList', () => {
+  it('clears existing children when called with an empty list', () => {
+    const { fileListEl, children } = makeFileListMock();
+    children.push({ tagName: 'STALE' });
+    renderFileList([], fileListEl);
+    assert.equal(children.length, 0);
+    assert.equal(fileListEl._wasReplaced(), true);
+  });
+
+  it('renders one <li> with name, size, and extension for a single file', () => {
+    const { fileListEl, children } = makeFileListMock();
+    renderFileList([{ name: 'report.pdf', size: 2048 }], fileListEl);
+    assert.equal(children.length, 1);
+    assert.equal(children[0].tagName, 'LI');
+    assert.match(children[0].textContent, /report\.pdf/);
+    assert.match(children[0].textContent, /2\.0 KB/);
+    assert.match(children[0].textContent, /pdf/);
+  });
+
+  it('renders <li>s in input order for three files', () => {
+    const { fileListEl, children } = makeFileListMock();
+    const files = [
+      { name: 'a.pdf', size: 100 },
+      { name: 'b.docx', size: 200 },
+      { name: 'c.pdf', size: 300 },
+    ];
+    renderFileList(files, fileListEl);
+    assert.equal(children.length, 3);
+    assert.match(children[0].textContent, /a\.pdf/);
+    assert.match(children[1].textContent, /b\.docx/);
+    assert.match(children[2].textContent, /c\.pdf/);
+  });
+
+  it('renders lowercased extension without a dot for a .pdf file', () => {
+    const { fileListEl, children } = makeFileListMock();
+    renderFileList([{ name: 'Document.PDF', size: 10 }], fileListEl);
+    assert.match(children[0].textContent, / pdf$/);
+    assert.equal(children[0].textContent.includes(' PDF '), false);
+  });
+
+  it('renders "unknown" format for a file with no extension', () => {
+    const { fileListEl, children } = makeFileListMock();
+    renderFileList([{ name: 'noext', size: 10 }], fileListEl);
+    assert.match(children[0].textContent, /unknown/);
+  });
+
+  it('uses injected formatBytes for size formatting', () => {
+    const { fileListEl, children } = makeFileListMock();
+    renderFileList(
+      [{ name: 'big.pdf', size: 5 * 1024 * 1024 }],
+      fileListEl,
+      { formatBytes: () => 'XX-SIZE' }
+    );
+    assert.match(children[0].textContent, /XX-SIZE/);
+  });
+
+  it('does nothing when fileListEl is null', () => {
+    let appended = false;
+    renderFileList([{ name: 'a.pdf', size: 1 }], null, {
+      appendChild: () => { appended = true; },
+    });
+    assert.equal(appended, false);
   });
 });
