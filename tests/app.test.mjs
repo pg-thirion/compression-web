@@ -214,9 +214,27 @@ describe('compressPdf', () => {
   });
 
   it('accepts custom deps', async () => {
-    const input = await buildPdf({ pages: 2 });
-    const result = await compressPdf(input, { PDFDocument });
-    const reloaded = await PDFDocument.load(result, { updateMetadata: false });
-    assert.equal(reloaded.getPageCount(), 2);
+    const sentinel = new Uint8Array([42, 42, 42]);
+    let loadCallCount = 0;
+    const stubDoc = {
+      setTitle: () => {},
+      setAuthor: () => {},
+      setSubject: () => {},
+      setKeywords: () => {},
+      setCreator: () => {},
+      setProducer: () => {},
+      save: async () => sentinel,
+      getPageCount: () => 1,
+    };
+    const stubPDFDocument = {
+      load: async () => {
+        loadCallCount++;
+        return stubDoc;
+      },
+    };
+    const input = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+    const result = await compressPdf(input, { PDFDocument: stubPDFDocument });
+    assert.ok(loadCallCount > 0, 'stub PDFDocument.load was never called — deps were not used');
+    assert.equal(result, sentinel, 'result was not the stub sentinel — deps were not consulted');
   });
 });

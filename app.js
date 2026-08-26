@@ -45,9 +45,8 @@ export function validateFile(file) {
   return null;
 }
 
-export async function compressPdf(bytes, deps = {}) {
-  const lib = deps.PDFDocument ? deps : (globalThis.PDFLib ?? {});
-  const { PDFDocument } = lib;
+export async function compressPdf(bytes, deps = { PDFDocument: globalThis.PDFLib?.PDFDocument }) {
+  const { PDFDocument } = deps;
   if (!PDFDocument) throw new Error('pdf-lib not loaded');
   try {
     const doc = await PDFDocument.load(bytes, { updateMetadata: false });
@@ -62,7 +61,8 @@ export async function compressPdf(bytes, deps = {}) {
     const verify = await PDFDocument.load(out, { updateMetadata: false });
     if (verify.getPageCount() !== doc.getPageCount()) return bytes;
     return out;
-  } catch {
+  } catch (err) {
+    console.warn('compressPdf: re-load verification failed; returning original bytes', err);
     return bytes;
   }
 }
