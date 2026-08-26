@@ -18,6 +18,7 @@ import {
   downloadResults,
   onCompressClick,
   readDocxOptions,
+  updateDocxOptionsVisibility,
 } from '../app.js';
 
 const require = createRequire(import.meta.url);
@@ -904,6 +905,72 @@ describe('readDocxOptions', () => {
     assert.equal(opts.stripMetadata, false);
     assert.equal(opts.stripTrackedChanges, false);
     assert.equal(opts.stripComments, false);
+  });
+});
+
+describe('updateDocxOptionsVisibility', () => {
+  it('hides the fieldset when the file list is empty', () => {
+    const fieldset = { hidden: true };
+    updateDocxOptionsVisibility([], fieldset);
+    assert.equal(fieldset.hidden, true);
+  });
+
+  it('hides the fieldset when the file list contains only PDFs', () => {
+    const fieldset = { hidden: true };
+    updateDocxOptionsVisibility(
+      [{ name: 'a.pdf' }, { name: 'b.pdf' }],
+      fieldset
+    );
+    assert.equal(fieldset.hidden, true);
+  });
+
+  it('shows the fieldset when the file list contains one DOCX', () => {
+    const fieldset = { hidden: true };
+    updateDocxOptionsVisibility([{ name: 'report.docx' }], fieldset);
+    assert.equal(fieldset.hidden, false);
+  });
+
+  it('shows the fieldset when the file list is a mix of PDF and DOCX', () => {
+    const fieldset = { hidden: true };
+    updateDocxOptionsVisibility(
+      [{ name: 'a.pdf' }, { name: 'b.docx' }],
+      fieldset
+    );
+    assert.equal(fieldset.hidden, false);
+  });
+
+  it('hides the fieldset when the file list contains only non-docx files', () => {
+    const fieldset = { hidden: true };
+    updateDocxOptionsVisibility(
+      [{ name: 'image.jpg' }, { name: 'data.csv' }],
+      fieldset
+    );
+    assert.equal(fieldset.hidden, true);
+  });
+
+  it('matches .docx case-insensitively', () => {
+    const fieldset = { hidden: true };
+    updateDocxOptionsVisibility([{ name: 'MyDoc.DOCX' }], fieldset);
+    assert.equal(fieldset.hidden, false);
+  });
+
+  it('honors a custom deps.hasDocx when provided', () => {
+    const fieldset = { hidden: true };
+    const hasDocx = (files) => files.length === 2;
+    updateDocxOptionsVisibility(
+      [{ name: 'a.pdf' }, { name: 'b.pdf' }],
+      fieldset,
+      { hasDocx }
+    );
+    assert.equal(fieldset.hidden, false, 'custom hasDocx returning true should show fieldset');
+  });
+
+  it('clears the hidden property (sets it to false) when a DOCX is present', () => {
+    const fieldset = { hidden: true };
+    updateDocxOptionsVisibility([{ name: 'x.docx' }], fieldset);
+    assert.equal(fieldset.hidden, false);
+    assert.equal('hidden' in fieldset, true, 'hidden property should exist after call');
+    assert.equal(fieldset.hasOwnProperty('hidden'), true);
   });
 });
 

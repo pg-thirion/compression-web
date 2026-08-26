@@ -292,6 +292,29 @@ export async function downloadResults(results, deps = {}) {
 }
 
 /**
+ * Show or hide the DOCX options fieldset based on whether the file list
+ * contains a .docx file.
+ * @param {Iterable<{name: string}>|null|undefined} fileList
+ * @param {{hidden: boolean}} fieldsetEl
+ * @param {{hasDocx?: Function}} [deps]
+ */
+export function updateDocxOptionsVisibility(fileList, fieldsetEl, deps = {}) {
+  const { hasDocx } = deps;
+  const has = typeof hasDocx === 'function' ? hasDocx(fileList) : defaultHasDocx(fileList);
+  fieldsetEl.hidden = !has;
+}
+
+function defaultHasDocx(fileList) {
+  if (!fileList) return false;
+  for (const f of fileList) {
+    if (f && f.name && typeof f.name === 'string' && f.name.toLowerCase().endsWith('.docx')) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
  * Read the DOCX options fieldset and return a plain options object.
  * @param {{querySelector: Function}} fieldset
  * @returns {{stripMetadata: boolean, stripTrackedChanges: boolean, stripComments: boolean}}
@@ -466,6 +489,7 @@ function attachUi() {
     const errors = [];
     state.files = filterFiles(Array.from(fileInput.files || []), errors);
     state.errors = errors;
+    updateDocxOptionsVisibility(fileInput.files, docxOptions);
     refresh();
   });
 
