@@ -44,6 +44,31 @@
     }
     h1 { margin: 0; font-size: 1.5rem; font-weight: 600; }
     h2 { margin: 0 0 0.5rem; font-size: 1.05rem; font-weight: 600; }
+    .intro { margin: 0; font-size: 0.95rem; color: var(--fg); }
+    .privacy { margin: 0; font-size: 0.85rem; color: var(--muted); }
+    .instructions {
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 0.7rem 0.9rem;
+        background: var(--tile-bg);
+    }
+    .instructions summary {
+        cursor: pointer;
+        font-weight: 600;
+        font-size: 0.95rem;
+        list-style: none;
+    }
+    .instructions summary::-webkit-details-marker { display: none; }
+    .instructions summary::after { content: " ▸"; color: var(--muted); font-weight: 400; }
+    .instructions[open] summary::after { content: " ▾"; }
+    .instructions ol {
+        margin: 0.7rem 0 0;
+        padding-left: 1.3rem;
+        font-size: 0.9rem;
+        color: var(--fg);
+    }
+    .instructions ol li { margin-bottom: 0.4rem; }
+    .instructions ol li:last-child { margin-bottom: 0; }
     #drop-zone {
         border: 2px dashed var(--border);
         border-radius: 8px;
@@ -93,7 +118,18 @@
 <body>
 <main>
     <h1>Compression Web</h1>
-    <p class="formats">Accepted formats: PDF, DOCX. Max 100&nbsp;MB per file.</p>
+    <p class="intro">Shrink PDF and DOCX files in your browser. Nothing is uploaded — the work happens on your computer and the result downloads straight to your device.</p>
+    <p class="privacy">Accepted formats: PDF, DOCX. Maximum 100&nbsp;MB per file.</p>
+
+    <details class="instructions">
+        <summary>How to use</summary>
+        <ol>
+            <li>Pick a compression level below. <strong>Medium</strong> is a safe default. Use <strong>Max</strong> only when you need the smallest file possible and don't mind some quality loss.</li>
+            <li>Drag your files into the box (or click the box to choose them from your computer). You can add several at once.</li>
+            <li>Click <strong>Compress &amp; download</strong>. The compressed files are bundled into a single ZIP that your browser downloads automatically.</li>
+            <li>Open the ZIP to find your smaller files, saved next to the originals with <code>.compressed.pdf</code> or <code>.compressed.docx</code> added to the filename.</li>
+        </ol>
+    </details>
 
     <fieldset>
         <legend><label for="files">Select files</label></legend>
