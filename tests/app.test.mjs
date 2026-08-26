@@ -13,10 +13,31 @@ import {
   stripTrackedChanges,
   stripCommentMarkers,
   reencodeMediaImage,
+  compressDocx,
 } from '../app.js';
 
 const require = createRequire(import.meta.url);
 const { PDFDocument } = require('../lib/pdf-lib.min.js');
+const JSZip = require('../lib/jszip.min.js');
+globalThis.JSZip = JSZip;
+
+async function buildDocx({ includeMedia = false, tracked = false, comments = false, coreMeta = 'real', mediaBytes = null } = {}) {
+  const z = new JSZip();
+  z.file('[Content_Types].xml', '<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"/>');
+  const coreXml = coreMeta === 'real'
+    ? '<?xml version="1.0"?><cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties"><dc:title xmlns:dc="http://purl.org/dc/elements/1.1/">' + 'A'.repeat(2000) + '</dc:title><dc:creator xmlns:dc="http://purl.org/dc/elements/1.1/">' + 'B'.repeat(500) + '</dc:creator><dc:subject xmlns:dc="http://purl.org/dc/elements/1.1/">' + 'C'.repeat(800) + '</dc:subject></cp:coreProperties>'
+    : '<?xml version="1.0"?><cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties"/>';
+  z.file('docProps/core.xml', coreXml);
+  z.file('docProps/app.xml', '<?xml version="1.0"?><Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties"><Application>x</Application></Properties>');
+  let body = '<w:p><w:r><w:t>Hello</w:t></w:r></w:p>';
+  if (tracked) body += '<w:ins w:id="1">tracked accept</w:ins><w:del w:id="2">tracked reject</w:del>';
+  if (comments) body += '<w:commentRangeStart/><w:t>commented</w:t><w:commentRangeEnd/><w:commentReference w:id="1"/>';
+  z.file('word/document.xml', `<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>${body}</w:body></w:document>`);
+  if (includeMedia) {
+    z.file('word/media/image1.jpg', mediaBytes || new Uint8Array([0xff, 0xd8, 0xff, 0xe0]));
+  }
+  return await z.generateAsync({ type: 'uint8array', compression: 'DEFLATE' });
+}
 
 async function buildPdf({ pages = 1, metadata = {} } = {}) {
   const doc = await PDFDocument.create();
@@ -513,5 +534,111 @@ describe('reencodeMediaImage', () => {
       /encode failed/
     );
     assert.equal(state().closeCount, 1);
+  });
+});
+
+describe('compressDocx', () => {
+  it('happy path: returns Uint8Array with word/document.xml and size ≤ original', async () => {
+    const input = await buildDocx({ coreMeta: 'real' });
+    const result = await compressDocx(input, 'medium', { stripMetadata: true });
+    assert.ok(result instanceof Uint8Array);
+    const verify = await JSZip.loadAsync(result);
+    assert.ok(verify.file('word/document.xml') !== null);
+    assert.ok(result.length <= input.length);
+  });
+
+  it('strips metadata by default: result is smaller and core.xml no longer contains the title', async () => {
+    const input = await buildDocx({ coreMeta: 'real' });
+    const result = await compressDocx(input, 'medium');
+    assert.ok(result.length < input.length, `expected ${result.length} < ${input.length}`);
+    const verify = await JSZip.loadAsync(result);
+    const coreXml = await verify.file('docProps/core.xml').async('string');
+    assert.equal(coreXml.includes('AAAAAAAAAA'), false);
+  });
+
+  it('does NOT strip metadata when stripMetadata is false', async () => {
+    const input = await buildDocx({ coreMeta: 'real' });
+    const result = await compressDocx(input, 'medium', { stripMetadata: false });
+    const verify = await JSZip.loadAsync(result);
+    const coreXml = await verify.file('docProps/core.xml').async('string');
+    assert.equal(coreXml.includes('AAAAAAAAAA'), true);
+  });
+
+  it('strips tracked changes when option is on: drops <w:del>, unwraps <w:ins>', async () => {
+    const input = await buildDocx({ tracked: true });
+    const result = await compressDocx(input, 'medium', { stripTrackedChanges: true });
+    const verify = await JSZip.loadAsync(result);
+    const docXml = await verify.file('word/document.xml').async('string');
+    assert.equal(docXml.includes('<w:del'), false);
+    assert.equal(docXml.includes('tracked reject'), false);
+    assert.equal(docXml.includes('<w:ins'), false);
+    assert.equal(docXml.includes('tracked accept'), true);
+  });
+
+  it('strips comment markers when option is on', async () => {
+    const input = await buildDocx({ comments: true });
+    const result = await compressDocx(input, 'medium', { stripComments: true });
+    const verify = await JSZip.loadAsync(result);
+    const docXml = await verify.file('word/document.xml').async('string');
+    assert.equal(docXml.includes('commentRangeStart'), false);
+    assert.equal(docXml.includes('commentRangeEnd'), false);
+    assert.equal(docXml.includes('commentReference'), false);
+    assert.match(docXml, /commented/);
+  });
+
+  it('re-encodes media via injected stub: smaller bytes replace original', async () => {
+    const origMedia = new Uint8Array(50).fill(7);
+    const input = await buildDocx({ includeMedia: true, mediaBytes: origMedia });
+    const smallerBytes = new Uint8Array([1, 2, 3]);
+    const stubReencode = async () => smallerBytes;
+    const result = await compressDocx(input, 'medium', {}, { reencodeMediaImage: stubReencode });
+    const verify = await JSZip.loadAsync(result);
+    const newMedia = await verify.file('word/media/image1.jpg').async('uint8array');
+    assert.equal(newMedia.length, 3);
+  });
+
+  it('media: leaves file unchanged when re-encoded output is larger', async () => {
+    const origMedia = new Uint8Array([1, 2, 3]);
+    const input = await buildDocx({ includeMedia: true, mediaBytes: origMedia });
+    const largerBytes = new Uint8Array(50).fill(9);
+    const stubReencode = async () => largerBytes;
+    const result = await compressDocx(input, 'medium', {}, { reencodeMediaImage: stubReencode });
+    const verify = await JSZip.loadAsync(result);
+    const newMedia = await verify.file('word/media/image1.jpg').async('uint8array');
+    assert.equal(newMedia.length, 3, 'should keep original smaller bytes');
+  });
+
+  it('skips re-encoding JPEG when level is High', async () => {
+    const input = await buildDocx({ includeMedia: true });
+    let called = false;
+    const stubReencode = async () => {
+      called = true;
+      return new Uint8Array([1, 2, 3]);
+    };
+    await compressDocx(input, 'high', {}, { reencodeMediaImage: stubReencode });
+    assert.equal(called, false, 'reencodeMediaImage should not be called for JPEG at High level');
+  });
+
+  it('falls back to original bytes when JSZip.loadAsync throws', async () => {
+    const input = await buildDocx();
+    const stubJSZip = {
+      loadAsync: async () => { throw new Error('corrupt zip'); },
+    };
+    const result = await compressDocx(input, 'medium', {}, { JSZip: stubJSZip });
+    assert.equal(result, input);
+  });
+
+  it('falls back to original bytes when result lacks word/document.xml', async () => {
+    const input = await buildDocx();
+    const fakeZip = {
+      files: {},
+      file: (name) => (name === 'word/document.xml' ? null : null),
+      generateAsync: async () => new Uint8Array([1, 2, 3]),
+    };
+    const stubJSZip = {
+      loadAsync: async () => fakeZip,
+    };
+    const result = await compressDocx(input, 'medium', {}, { JSZip: stubJSZip });
+    assert.equal(result, input);
   });
 });

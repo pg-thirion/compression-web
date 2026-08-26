@@ -126,3 +126,91 @@ export async function reencodeMediaImage(bytes, mimeType, quality, deps = {}) {
     bitmap.close();
   }
 }
+
+/**
+ * Compress a DOCX file structurally using JSZip.
+ * - Strips docProps/core.xml + docProps/app.xml to minimal stubs (when stripMetadata)
+ * - Strips tracked changes / comment markers from word/document.xml (per options)
+ * - Re-encodes JPEG/PNG images in word/media/ at the level's quality
+ * - Re-zips with DEFLATE level 9
+ * - Validates by reopening and checking word/document.xml exists
+ * - Falls back to original bytes on any failure
+ * @param {Uint8Array} bytes
+ * @param {'low'|'medium'|'high'} [level]
+ * @param {{stripMetadata?: boolean, stripTrackedChanges?: boolean, stripComments?: boolean}} [options]
+ * @param {{JSZip?: any, reencodeMediaImage?: Function}} [deps]
+ * @returns {Promise<Uint8Array>}
+ */
+export async function compressDocx(bytes, level = 'medium', options = {}, deps = {}) {
+  const {
+    JSZip: JSZipCtor = globalThis.JSZip,
+    reencodeMediaImage: reencode = reencodeMediaImage,
+  } = deps;
+
+  if (!JSZipCtor) throw new Error('JSZip not loaded');
+
+  const {
+    stripMetadata = true,
+    stripTrackedChanges: shouldStripTrackedChanges = false,
+    stripComments: shouldStripComments = false,
+  } = options;
+
+  const quality = level === 'low' ? 0.5 : level === 'high' ? 0.85 : 0.7;
+
+  try {
+    const zip = await JSZipCtor.loadAsync(bytes);
+
+    if (stripMetadata) {
+      if (zip.file('docProps/core.xml')) {
+        zip.file('docProps/core.xml', minimalCoreXml());
+      }
+      if (zip.file('docProps/app.xml')) {
+        zip.file('docProps/app.xml', minimalAppXml());
+      }
+    }
+
+    const docFile = zip.file('word/document.xml');
+    if (docFile) {
+      let docXml = await docFile.async('string');
+      if (shouldStripTrackedChanges) docXml = stripTrackedChanges(docXml);
+      if (shouldStripComments) docXml = stripCommentMarkers(docXml);
+      zip.file('word/document.xml', docXml);
+    }
+
+    const mediaNames = Object.keys(zip.files).filter(
+      (name) => /^word\/media\//.test(name) && !zip.files[name].dir
+    );
+    for (const name of mediaNames) {
+      const lower = name.toLowerCase();
+      const ext = lower.slice(lower.lastIndexOf('.'));
+      if (ext !== '.jpg' && ext !== '.jpeg' && ext !== '.png') continue;
+      const isJpeg = ext === '.jpg' || ext === '.jpeg';
+      if (level === 'high' && isJpeg) continue;
+
+      const mimeType = isJpeg ? 'image/jpeg' : 'image/png';
+      const origBytes = await zip.file(name).async('uint8array');
+      const reencoded = await reencode(origBytes, mimeType, quality);
+      if (reencoded.length < origBytes.length) {
+        zip.file(name, reencoded);
+      }
+    }
+
+    const out = await zip.generateAsync({
+      type: 'uint8array',
+      compression: 'DEFLATE',
+      compressionOptions: { level: 9 },
+    });
+
+    const verify = await JSZipCtor.loadAsync(out);
+    if (!verify.file('word/document.xml')) {
+      console.warn('compressDocx: validation failed — word/document.xml missing');
+      return bytes;
+    }
+
+    if (out.length >= bytes.length) return bytes;
+    return out;
+  } catch (err) {
+    console.warn('compressDocx: failed, returning original bytes', err);
+    return bytes;
+  }
+}
