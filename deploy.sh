@@ -35,6 +35,8 @@ POLICY_JSON=$(cat <<JSON
       "Action": "s3:GetObject",
       "Resource": [
         "arn:aws:s3:::${BUCKET_NAME}/index.html",
+        "arn:aws:s3:::${BUCKET_NAME}/favicon.png",
+        "arn:aws:s3:::${BUCKET_NAME}/favicon.ico",
         "arn:aws:s3:::${BUCKET_NAME}/app.js",
         "arn:aws:s3:::${BUCKET_NAME}/lib/jszip.min.js",
         "arn:aws:s3:::${BUCKET_NAME}/lib/pdf-lib.min.js"
@@ -51,6 +53,8 @@ aws s3api put-bucket-policy \
   --policy "$POLICY_JSON"
 
 aws s3 cp "$SCRIPT_DIR/index.html" "s3://${BUCKET_NAME}/index.html" --region "$REGION" --content-type "text/html" --cache-control "no-cache"
+aws s3 cp "$SCRIPT_DIR/favicon.png" "s3://${BUCKET_NAME}/favicon.png" --region "$REGION" --content-type "image/png" --cache-control "public, max-age=86400"
+aws s3 cp "$SCRIPT_DIR/favicon.ico" "s3://${BUCKET_NAME}/favicon.ico" --region "$REGION" --content-type "image/x-icon" --cache-control "public, max-age=86400"
 aws s3 cp "$SCRIPT_DIR/app.js" "s3://${BUCKET_NAME}/app.js" --region "$REGION" --content-type "text/javascript" --cache-control "public, max-age=86400"
 aws s3 cp "$SCRIPT_DIR/lib/jszip.min.js" "s3://${BUCKET_NAME}/lib/jszip.min.js" --region "$REGION" --content-type "text/javascript" --cache-control "public, max-age=31536000, immutable"
 aws s3 cp "$SCRIPT_DIR/lib/pdf-lib.min.js" "s3://${BUCKET_NAME}/lib/pdf-lib.min.js" --region "$REGION" --content-type "text/javascript" --cache-control "public, max-age=31536000, immutable"
@@ -64,8 +68,8 @@ if [ -n "$CLOUDFRONT_DISTRIBUTION_ID" ]; then
   cat > "$INVALIDATION_BATCH" <<JSON
 {
   "Paths": {
-    "Quantity": 4,
-    "Items": ["/index.html", "/app.js", "/lib/jszip.min.js", "/lib/pdf-lib.min.js"]
+    "Quantity": 6,
+    "Items": ["/index.html", "/favicon.png", "/favicon.ico", "/app.js", "/lib/jszip.min.js", "/lib/pdf-lib.min.js"]
   },
   "CallerReference": "deploy-$(date +%s)"
 }

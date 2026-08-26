@@ -98,17 +98,21 @@ export function stripCommentMarkers(xml) {
 }
 
 /**
- * Re-encode an image at the supplied JPEG quality via Canvas.
+ * Re-encode an image at the supplied quality via Canvas.
+ * Output format matches input format so PNG transparency is preserved.
+ * If maxDimension is set and the image exceeds it on its longest side,
+ * the image is downscaled before re-encoding.
  * @param {Uint8Array} bytes
  * @param {string} mimeType
  * @param {number} quality
- * @param {{createImageBitmap?: Function, OffscreenCanvas?: Function}} [deps]
+ * @param {{createImageBitmap?: Function, OffscreenCanvas?: Function, maxDimension?: number}} [deps]
  * @returns {Promise<Uint8Array>}
  */
 export async function reencodeMediaImage(bytes, mimeType, quality, deps = {}) {
   const {
     createImageBitmap = globalThis.createImageBitmap,
     OffscreenCanvas = globalThis.OffscreenCanvas,
+    maxDimension,
   } = deps;
 
   if (!createImageBitmap) throw new Error('createImageBitmap not available');
@@ -117,10 +121,24 @@ export async function reencodeMediaImage(bytes, mimeType, quality, deps = {}) {
   const blob = new Blob([bytes], { type: mimeType });
   const bitmap = await createImageBitmap(blob);
   try {
-    const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
+    let canvasWidth = bitmap.width;
+    let canvasHeight = bitmap.height;
+    let drawWidth = canvasWidth;
+    let drawHeight = canvasHeight;
+    if (maxDimension && maxDimension > 0) {
+      const longest = Math.max(canvasWidth, canvasHeight);
+      if (longest > maxDimension) {
+        const scale = maxDimension / longest;
+        drawWidth = Math.max(1, Math.round(canvasWidth * scale));
+        drawHeight = Math.max(1, Math.round(canvasHeight * scale));
+        canvasWidth = drawWidth;
+        canvasHeight = drawHeight;
+      }
+    }
+    const canvas = new OffscreenCanvas(canvasWidth, canvasHeight);
     const ctx = canvas.getContext('2d');
-    ctx.drawImage(bitmap, 0, 0);
-    const outBlob = await canvas.convertToBlob({ type: 'image/jpeg', quality });
+    ctx.drawImage(bitmap, 0, 0, drawWidth, drawHeight);
+    const outBlob = await canvas.convertToBlob({ type: mimeType, quality });
     return new Uint8Array(await outBlob.arrayBuffer());
   } finally {
     bitmap.close();
@@ -151,11 +169,17 @@ export async function compressDocx(bytes, level = 'medium', options = {}, deps =
 
   const {
     stripMetadata = true,
-    stripTrackedChanges: shouldStripTrackedChanges = false,
-    stripComments: shouldStripComments = false,
+    stripTrackedChanges: shouldStripTrackedChanges = level === 'high' || level === 'max',
+    stripComments: shouldStripComments = level === 'high',
   } = options;
 
-  const quality = level === 'low' ? 0.5 : level === 'high' ? 0.85 : 0.7;
+  const LEVEL_IMAGE = {
+    low:    { quality: 0.61, maxDim: 1600 },
+    medium: { quality: 0.53, maxDim: 1200 },
+    high:   { quality: 0.46, maxDim: 1024 },
+    max:    { quality: 0.40, maxDim: 900 },
+  };
+  const ls = LEVEL_IMAGE[level];
 
   try {
     const zip = await JSZipCtor.loadAsync(bytes);
@@ -183,15 +207,94 @@ export async function compressDocx(bytes, level = 'medium', options = {}, deps =
     for (const name of mediaNames) {
       const lower = name.toLowerCase();
       const ext = lower.slice(lower.lastIndexOf('.'));
-      if (ext !== '.jpg' && ext !== '.jpeg' && ext !== '.png') continue;
       const isJpeg = ext === '.jpg' || ext === '.jpeg';
-      if (level === 'high' && isJpeg) continue;
+      const isPng = ext === '.png';
+      const isBmp = ext === '.bmp';
+      const isTiff = ext === '.tif' || ext === '.tiff';
 
-      const mimeType = isJpeg ? 'image/jpeg' : 'image/png';
+      if (!isJpeg && !isPng && !isBmp && !isTiff) continue;
+
+      let mimeType;
+      let outputExt;
+      let useMaxDimension;
+      let levelQuality;
+      if (!ls) continue;
+      useMaxDimension = ls.maxDim;
+      levelQuality = ls.quality;
+      if (isBmp || isTiff) {
+        mimeType = 'image/jpeg';
+        outputExt = '.jpg';
+      } else if (isJpeg) {
+        mimeType = 'image/jpeg';
+        outputExt = ext;
+      } else {
+        mimeType = 'image/png';
+        outputExt = ext;
+      }
+
       const origBytes = await zip.file(name).async('uint8array');
-      const reencoded = await reencode(origBytes, mimeType, quality);
+      const reencoded = await reencode(origBytes, mimeType, levelQuality, {
+        maxDimension: useMaxDimension,
+      });
       if (reencoded.length < origBytes.length) {
-        zip.file(name, reencoded);
+        if (outputExt !== ext) {
+          const newName = name.slice(0, -ext.length) + outputExt;
+          zip.file(newName, reencoded);
+          zip.remove(name);
+          try {
+            const relsPath = 'word/_rels/document.xml.rels';
+            const relsEntry = zip.file(relsPath);
+            if (relsEntry) {
+              const relsXml = await relsEntry.async('string');
+              const oldTarget = name.slice('word/'.length);
+              const newTarget = newName.slice('word/'.length);
+              const escapedOld = oldTarget.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+              const escapedNew = newTarget.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+              const relsPattern = new RegExp(
+                `(<Relationship[^>]*Target=")${escapedOld}([^"]*"[^>]*\\/>)`,
+                'g'
+              );
+              const updatedRels = relsXml.replace(relsPattern, `$1${escapedNew}$2`);
+              if (updatedRels !== relsXml) {
+                zip.file(relsPath, updatedRels);
+              }
+            }
+          } catch (err) {
+            // Rel update failed; new file is orphaned but document still parses.
+          }
+        } else {
+          zip.file(name, reencoded);
+        }
+      }
+    }
+
+    if (level === 'high') {
+      const xmlParts = Object.keys(zip.files).filter(
+        (name) => !zip.files[name].dir && /\.xml$|\.rels$/i.test(name)
+      );
+      for (const name of xmlParts) {
+        const entry = zip.file(name);
+        if (!entry) continue;
+        try {
+          const original = await entry.async('string');
+          const minified = original
+            .replace(/>\s+</g, '><')
+            .replace(/\s+</g, '<')
+            .replace(/>\s+/g, '>')
+            .trim();
+          if (minified.length < original.length) {
+            zip.file(name, minified);
+          }
+        } catch (err) {
+          // Non-text content (e.g. binary disguised as XML) — leave alone.
+        }
+      }
+
+      const fontNames = Object.keys(zip.files).filter(
+        (name) => !zip.files[name].dir && /^word\/fonts\//i.test(name)
+      );
+      for (const name of fontNames) {
+        zip.remove(name);
       }
     }
 
@@ -253,7 +356,8 @@ function defaultScheduleRevoke(url) {
 }
 
 /**
- * Build a single ZIP from compressed results and trigger a browser download.
+ * Download compressed results. With a single file, download it directly
+ * (no ZIP wrapper). With multiple files, bundle them in a ZIP.
  * @param {Array<{name: string, bytes: Uint8Array}>} results
  * @param {{
  *   JSZip?: Function,
@@ -273,19 +377,28 @@ export async function downloadResults(results, deps = {}) {
     filename = `compressed-${Date.now()}.zip`,
   } = deps;
 
-  if (typeof JSZipCtor !== 'function') {
-    throw new Error('JSZip not loaded');
+  let blob;
+  let downloadName;
+
+  if (results.length === 1) {
+    blob = new Blob([results[0].bytes]);
+    downloadName = results[0].name;
+  } else {
+    if (typeof JSZipCtor !== 'function') {
+      throw new Error('JSZip not loaded');
+    }
+    const zip = new JSZipCtor();
+    for (const { name, bytes } of results) {
+      zip.file(name, bytes);
+    }
+    blob = await zip.generateAsync({ type: 'blob', compression: 'STORE' });
+    downloadName = filename;
   }
 
-  const zip = new JSZipCtor();
-  for (const { name, bytes } of results) {
-    zip.file(name, bytes);
-  }
-  const blob = await zip.generateAsync({ type: 'blob', compression: 'STORE' });
   const url = createObjectURL(blob);
   const link = createAnchorElement();
   link.href = url;
-  link.download = filename;
+  link.download = downloadName;
   link.click();
   scheduleRevoke(url);
   return url;
@@ -510,6 +623,7 @@ function attachUi() {
   const errorsList = document.getElementById('errors');
   const convertButton = document.getElementById('convert');
   const fileListEl = document.getElementById('file-list');
+  const dropZone = document.getElementById('drop-zone');
 
   if (!fileInput || !levelSelect || !docxOptions || !status || !errorsList || !convertButton) {
     return;
@@ -542,6 +656,47 @@ function attachUi() {
     updateDocxOptionsVisibility(fileInput.files, docxOptions);
     refresh();
   });
+
+  function acceptDroppedFiles(fileList) {
+    const dt = new DataTransfer();
+    for (const f of Array.from(fileList || [])) dt.items.add(f);
+    fileInput.files = dt.files;
+    const errors = [];
+    state.files = filterFiles(Array.from(fileInput.files || []), errors);
+    state.errors = errors;
+    updateDocxOptionsVisibility(fileInput.files, docxOptions);
+    refresh();
+  }
+
+  if (dropZone) {
+    ['dragenter', 'dragover'].forEach((evt) => {
+      dropZone.addEventListener(evt, (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        dropZone.classList.add('is-dragover');
+      });
+    });
+    ['dragleave', 'dragend'].forEach((evt) => {
+      dropZone.addEventListener(evt, (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        dropZone.classList.remove('is-dragover');
+      });
+    });
+    dropZone.addEventListener('drop', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      dropZone.classList.remove('is-dragover');
+      acceptDroppedFiles(e.dataTransfer ? e.dataTransfer.files : null);
+    });
+    dropZone.addEventListener('click', () => fileInput.click());
+    dropZone.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        fileInput.click();
+      }
+    });
+  }
 
   convertButton.addEventListener('click', () => {
     onCompressClick(
