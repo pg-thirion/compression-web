@@ -44,3 +44,25 @@ export function validateFile(file) {
 
   return null;
 }
+
+export async function compressPdf(bytes, deps = {}) {
+  const lib = deps.PDFDocument ? deps : (globalThis.PDFLib ?? {});
+  const { PDFDocument } = lib;
+  if (!PDFDocument) throw new Error('pdf-lib not loaded');
+  try {
+    const doc = await PDFDocument.load(bytes, { updateMetadata: false });
+    doc.setTitle('');
+    doc.setAuthor('');
+    doc.setSubject('');
+    doc.setKeywords([]);
+    doc.setCreator('');
+    doc.setProducer('');
+    const out = await doc.save({ useObjectStreams: true });
+    if (out.length >= bytes.length) return bytes;
+    const verify = await PDFDocument.load(out, { updateMetadata: false });
+    if (verify.getPageCount() !== doc.getPageCount()) return bytes;
+    return out;
+  } catch {
+    return bytes;
+  }
+}
