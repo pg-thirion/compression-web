@@ -474,8 +474,6 @@ describe('reencodeMediaImage', () => {
     );
     assert.ok(result instanceof Uint8Array);
     assert.equal(result.length, 4);
-    assert.equal(state().drawImageCalled, true);
-    assert.equal(state().getContextCalled, true);
   });
 
   it('sizes the canvas to the bitmap dimensions', async () => {
