@@ -74,6 +74,53 @@ Single static page, no backend:
 
 Not included: no pdf.js, no rasterization, no downsampling of text, no worker threads. All processing runs on the main thread.
 
+## Install it yourself
+
+The app is a static page — no server, no build step, no database. Three ways to run it:
+
+### Option A — Use it straight from GitHub Pages
+
+If you fork this repo and turn on GitHub Pages for the `main` branch, the page goes live at `https://<your-username>.github.io/compression-web/` within a minute or two. No configuration needed; everything (HTML, JS, libraries, favicon) is already in the root.
+
+Steps:
+
+1. Fork this repository.
+2. On your fork, go to **Settings → Pages**.
+3. Under **Source**, pick **Deploy from a branch**, branch `main`, folder `/ (root)`.
+4. Wait a minute. GitHub will show the URL at the top of the page.
+
+That's it. Open the URL, drop in a file, download the result.
+
+### Option B — Use it locally without anything installed
+
+You can run the page from a folder on your computer without Python, Node, or any tooling:
+
+1. Click the green **Code** button on GitHub and choose **Download ZIP**.
+2. Unzip the file anywhere.
+3. Double-click `index.html`. It opens in your default browser and works.
+
+> Some browsers restrict `file://` pages from reading `lib/*.js` over ES modules. If you see a blank page or "module not found" errors, switch to Option C — it takes one extra command.
+
+### Option C — Run it locally with one command
+
+If you have Python 3 (most macOS/Linux installs already do, and Windows can grab it from python.org):
+
+```bash
+cd compression-web
+python -m http.server 8000
+```
+
+Then open <http://localhost:8000> in your browser.
+
+If you have Node instead:
+
+```bash
+cd compression-web
+npx --yes serve -l 8000 .
+```
+
+Either way the page works exactly like the live version, but nothing leaves your machine — your files never touch the network.
+
 ## Development
 
 Run the test suite:
