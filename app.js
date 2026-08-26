@@ -379,52 +379,55 @@ export async function onCompressClick(elements, deps = {}) {
     `Compressing ${accepted.length} file${accepted.length === 1 ? '' : 's'}...`
   );
 
-  const results = [];
-  const docxOpts = readDocxOptions(docxOptions);
-  const compressionLevel = level?.value ?? 'medium';
+  try {
+    const results = [];
+    const docxOpts = readDocxOptions(docxOptions);
+    const compressionLevel = level?.value ?? 'medium';
 
-  for (const file of accepted) {
-    try {
-      const buffer = await arrayBuffer(file);
-      const bytes = new Uint8Array(buffer);
-      const lower = file.name.toLowerCase();
-      const dotIdx = lower.lastIndexOf('.');
-      const ext = dotIdx >= 0 ? lower.slice(dotIdx) : '';
-      let outBytes;
-      let outName;
+    for (const file of accepted) {
+      try {
+        const buffer = await arrayBuffer(file);
+        const bytes = new Uint8Array(buffer);
+        const lower = file.name.toLowerCase();
+        const dotIdx = lower.lastIndexOf('.');
+        const ext = dotIdx >= 0 ? lower.slice(dotIdx) : '';
+        let outBytes;
+        let outName;
 
-      if (ext === '.pdf') {
-        outBytes = await compressPdfFn(bytes);
-        outName = file.name.replace(/\.pdf$/i, '') + '.compressed.pdf';
-      } else if (ext === '.docx') {
-        outBytes = await compressDocxFn(bytes, compressionLevel, docxOpts);
-        outName = file.name.replace(/\.docx$/i, '') + '.compressed.docx';
-      } else {
-        appendError(errorsList, file.name, `Unsupported extension: ${ext}`);
-        continue;
+        if (!FILE_EXTENSIONS.has(ext)) {
+          appendError(errorsList, file.name, `Unsupported extension: ${ext}`);
+          continue;
+        }
+        if (ext === '.pdf') {
+          outBytes = await compressPdfFn(bytes);
+          outName = file.name.replace(/\.pdf$/i, '') + '.compressed.pdf';
+        } else {
+          outBytes = await compressDocxFn(bytes, compressionLevel, docxOpts);
+          outName = file.name.replace(/\.docx$/i, '') + '.compressed.docx';
+        }
+        results.push({ name: outName, bytes: outBytes });
+      } catch (err) {
+        appendError(errorsList, file.name, err.message);
       }
-      results.push({ name: outName, bytes: outBytes });
-    } catch (err) {
-      appendError(errorsList, file.name, err.message);
     }
-  }
 
-  if (results.length > 0) {
-    try {
-      await downloadFn(results);
-      setStatus(
-        status,
-        `Compressed ${results.length} file${results.length === 1 ? '' : 's'}.`
-      );
-    } catch (err) {
-      appendError(errorsList, 'Download', err.message);
-      setStatus(status, 'Compression finished but download failed.');
+    if (results.length > 0) {
+      try {
+        await downloadFn(results);
+        setStatus(
+          status,
+          `Compressed ${results.length} file${results.length === 1 ? '' : 's'}.`
+        );
+      } catch (err) {
+        appendError(errorsList, 'Download', err.message);
+        setStatus(status, 'Compression finished but download failed.');
+      }
+    } else {
+      setStatus(status, 'No files were compressed.');
     }
-  } else {
-    setStatus(status, 'No files were compressed.');
+  } finally {
+    if (convertButton) convertButton.disabled = false;
   }
-
-  if (convertButton) convertButton.disabled = false;
 }
 
 // DOM attach — runs only in a browser environment.

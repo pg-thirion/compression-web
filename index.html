@@ -80,69 +80,13 @@
     #status { margin: 0; min-height: 1.2em; }
     #errors { margin: 0; padding-left: 1.2rem; color: var(--accent); }
     .formats { font-size: 0.8rem; color: var(--muted); margin: 0; }
-    .summary {
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-        gap: 0.75rem;
-        padding: 0.75rem;
-        background: var(--tile-bg);
-        border: 1px solid var(--border);
-        border-radius: 8px;
-    }
-    .metric {
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        text-align: center;
-        padding: 0.5rem;
-    }
-    .metric-value {
-        font-size: 1.4rem;
-        font-weight: 600;
-        color: var(--accent);
-        font-variant-numeric: tabular-nums;
-    }
-    .metric-label {
-        font-size: 0.8rem;
-        color: var(--muted);
-        margin-top: 0.2rem;
-    }
-    .history {
-        padding: 0.75rem 1rem;
-        background: var(--tile-bg);
-        border: 1px solid var(--border);
-        border-radius: 8px;
-    }
-    .history h2 { color: var(--muted); font-weight: 500; font-size: 0.95rem; text-transform: uppercase; letter-spacing: 0.05em; }
-    #history-list {
+    #file-list {
         margin: 0;
-        padding-left: 0;
-        list-style: none;
-        max-height: 12rem;
-        overflow-y: auto;
-    }
-    #history-list li {
-        display: flex;
-        justify-content: space-between;
-        align-items: baseline;
-        padding: 0.35rem 0;
-        border-bottom: 1px solid var(--border);
+        padding-left: 1.2rem;
+        color: var(--muted);
         font-size: 0.9rem;
     }
-    #history-list li:last-child { border-bottom: none; }
-    .hist-name {
-        flex: 1 1 auto;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-        margin-right: 0.5rem;
-    }
-    .hist-saved {
-        flex: 0 0 auto;
-        color: var(--accent);
-        font-variant-numeric: tabular-nums;
-        font-size: 0.85rem;
-    }
+    #file-list:empty { display: none; }
 </style>
 </head>
 <body>
@@ -174,30 +118,15 @@
         <label><input type="checkbox" id="strip-metadata" checked> Strip metadata</label>
     </fieldset>
 
+    <ul id="file-list"></ul>
+
     <button id="convert" type="button" disabled>Compress &amp; download</button>
-
-    <section id="summary" class="summary" hidden>
-        <div class="metric">
-            <div class="metric-value" id="totalSavedMB">0.00 MB</div>
-            <div class="metric-label">saved this session</div>
-        </div>
-        <div class="metric">
-            <div class="metric-value" id="filesProcessed">0</div>
-            <div class="metric-label">files processed</div>
-        </div>
-    </section>
-
-    <section id="history" class="history" hidden>
-        <h2>Recent compressions</h2>
-        <ul id="history-list"></ul>
-    </section>
 
     <p id="status" role="status" aria-live="polite">No files selected.</p>
     <ul id="errors"></ul>
 </main>
 <script src="lib/jszip.min.js"></script>
 <script src="lib/pdf-lib.min.js"></script>
-<script src="lib/pdf.min.js"></script>
 <script type="module" src="app.js"></script>
 </body>
 </html>
