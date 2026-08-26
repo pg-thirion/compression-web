@@ -56,6 +56,10 @@ The DOCX options fieldset appears only when at least one DOCX file is in the que
 - Transparent PNGs are preserved: only opaque images are candidates for re-encoding where doing so would help. (At present all images run through the same quality/cap pipeline; if re-encoded bytes are larger, the original is kept.)
 - Single file at a time is processed; multiple files run sequentially on the main thread.
 
+## In-page instructions
+
+A collapsible **"How to use"** details block sits above the drop zone. It walks non-technical users through the four steps (pick a level, drop files, click the button, open the ZIP) and opens with a privacy note: *"Nothing is uploaded — the work happens on your computer and the result downloads straight to your device."* The block is collapsed by default to keep the page tidy for repeat users.
+
 ## Architecture
 
 Single static page, no backend:
