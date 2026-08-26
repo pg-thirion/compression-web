@@ -337,6 +337,31 @@ describe('stripTrackedChanges', () => {
     const output = stripTrackedChanges(input);
     assert.equal(output, 'keepmore');
   });
+
+  it('drops a self-closing <w:del/> without consuming following content', () => {
+    const input = '<w:del w:id="1"/>KEEP';
+    const output = stripTrackedChanges(input);
+    assert.equal(output, 'KEEP');
+  });
+
+  it('handles interleaved self-closing and paired <w:del> without corrupting content', () => {
+    const input = '<w:del w:id="1"/>KEEP<w:del w:id="2">GONE</w:del>TAIL';
+    const output = stripTrackedChanges(input);
+    assert.equal(output, 'KEEPTAIL');
+  });
+
+  it('drops a self-closing <w:ins/> (the unwrap form is symmetric with <w:del/>)', () => {
+    const input = '<w:ins w:id="1"/>';
+    const output = stripTrackedChanges(input);
+    assert.equal(output, '');
+  });
+
+  it('still drops paired <w:del> content (regression guard for the alternation)', () => {
+    const input = '<w:del w:id="2">GONE</w:del>TAIL';
+    const output = stripTrackedChanges(input);
+    assert.equal(output, 'TAIL');
+    assert.equal(output.includes('GONE'), false);
+  });
 });
 
 describe('stripCommentMarkers', () => {

@@ -85,8 +85,8 @@ export function minimalAppXml() {
 
 export function stripTrackedChanges(xml) {
   return xml
-    .replace(/<w:del(?:\s[^>]*)?>[\s\S]*?<\/w:del>/g, '')
-    .replace(/<w:ins(?:\s[^>]*)?>/g, '')
+    .replace(/<w:del(?:\s[^>]*)?\/>|<w:del(?:\s[^>]*)?>[\s\S]*?<\/w:del>/g, '')
+    .replace(/<w:ins(?:\s[^>]*)?\/>|<w:ins(?:\s[^>]*)?>/g, '')
     .replace(/<\/w:ins>/g, '');
 }
 
